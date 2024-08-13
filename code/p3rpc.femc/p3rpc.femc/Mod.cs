@@ -7,15 +7,18 @@ using Reloaded.Memory;
 using Reloaded.Memory.SigScan.ReloadedII.Interfaces;
 using Reloaded.Mod.Interfaces;
 using SharedScans.Interfaces;
-using System;
 using System.Diagnostics;
-using System.Reflection;
 using UnrealEssentials.Interfaces;
 using Unreal.ObjectsEmitter.Interfaces;
-using System;
-using System.Collections.Generic;
 using static p3rpc.femc.Configuration.Config;
 using p3rpc.classconstructor.Interfaces;
+using BGME.BattleThemes.Interfaces;
+using BGME.BattleThemes.Config;
+using Ryo.Interfaces;
+using System.IO;
+
+
+/// ok maybe p3rpc.femc.music.interfaces is required, but it's not in repo and randomization doesn't work leading me to believe they're connected, or randomization never worked idk
 
 namespace p3rpc.femc
 {
@@ -54,44 +57,45 @@ namespace p3rpc.femc
 		/// The configuration of the currently executing mod.
 		/// </summary>
 		private readonly IModConfig _modConfig;
-
 		private FemcContext _context;
 		private ModuleRuntime<FemcContext> _modRuntime;
 		private readonly IUnreal unreal;
+        private readonly ThemeConfig themeConfig;
 
-		private string modName { get; set; }
+
+        private string modName { get; set; }
 
 		public Mod(ModContext context)
 		{
-			_modLoader = context.ModLoader;
+            _modLoader = context.ModLoader;
 			_hooks = context.Hooks;
 			_logger = context.Logger;
 			_owner = context.Owner;
 			_configuration = context.Configuration;
 			_modConfig = context.ModConfig;
-
             // Get dependencies and initialize context
             var mainModule = Process.GetCurrentProcess().MainModule;
-            if (mainModule == null) throw new Exception($"[{_modConfig.ModName}] Could not get main module (this should never happen)");
-            var baseAddress = mainModule.BaseAddress;
-
-			unreal = GetDependency<IUnreal>("Unreal Objects Emitter");
+			if (mainModule == null) throw new Exception($"[{_modConfig.ModName}] Could not get main module (this should never happen)");
+			var baseAddress = mainModule.BaseAddress;
+            unreal = GetDependency<IUnreal>("Unreal Objects Emitter");
 			var startupScanner = GetDependency<IStartupScanner>("Reloaded Startup Scanner");
 			if (_hooks == null) throw new Exception($"[{_modConfig.ModName}] Could not get controller for Reloaded hooks");
 			var sharedScans = GetDependency<ISharedScans>("Shared Scans");
 			Utils utils = new(startupScanner, _logger, _hooks, baseAddress, "Femc Project", System.Drawing.Color.Thistle, _configuration.DebugLogLevel);
 			var unrealEssentials = GetDependency<IUnrealEssentials>("Unreal Essentials");
 			var classMethods = GetDependency<IClassMethods>("Class Constructor (Class Methods)");
-			var objectMethods = GetDependency<IObjectMethods>("Class Constructor (Object Methods)");
-            var memory = new Memory();
-			_context = new(baseAddress, _configuration, _logger, startupScanner, _hooks, _modLoader.GetDirectoryForModId(_modConfig.ModId), utils, memory, sharedScans, classMethods, objectMethods);
+            var objectMethods = GetDependency<IObjectMethods>("Class Constructor (Object Methods)");
+			var memory = new Memory();
+            this.themeConfig = new ThemeConfig(this._modLoader, this._modConfig, this._configuration, this._logger);
+            _context = new(baseAddress, _configuration, _logger, startupScanner, _hooks, _modLoader.GetDirectoryForModId(_modConfig.ModId), utils, memory, sharedScans, classMethods, objectMethods);
 			_modRuntime = new(_context);
 
 			modName = _modConfig.ModName;
 			// Load Modules/assets
 			LoadEnabledAddons(unrealEssentials);
 			InitializeModules();
-            RedirectPlayerAssets();
+			GenerateMusicScript();
+			RedirectPlayerAssets();
 
 		}
 
@@ -99,180 +103,308 @@ namespace p3rpc.femc
 		{
 			var controller = _modLoader.GetController<IControllerType>();
 			if (controller == null || !controller.TryGetTarget(out var target))
-                throw new Exception($"[{_modConfig.ModName}] Could not get controller for \"{modName}\". This depedency is likely missing.");
-            return target;
+				throw new Exception($"[{_modConfig.ModName}] Could not get controller for \"{modName}\". This depedency is likely missing.");
+			return target;
 
-        }
+		}
 
-		private void LoadEnabledAddons(IUnrealEssentials unrealEssentials)
+        private void LoadEnabledAddons(IUnrealEssentials unrealEssentials)
 		{
-            try
-            {
-                if (_configuration.HairTrue == HairType.MudkipsHair)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "3d", "hair", "MudkipHair"));
-                else if (_configuration.HairTrue == HairType.KotoneBeanHair)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "3d", "hair", "NaobeanHair"));
+			try
+			{
+				if (_configuration.HairTrue == HairType.MudkipsHair)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "3d", "hair", "MudkipHair"));
+				else if (_configuration.HairTrue == HairType.KotoneBeanHair)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "3d", "hair", "NaobeanHair"));
 
-                if (_configuration.AOATrue == AOAType.Ely)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "AOA", "Ely"));
-                else if (_configuration.AOATrue == AOAType.Chrysanthie)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "AOA", "Chrysanthie"));
-                else if (_configuration.AOATrue == AOAType.Fernando)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "AOA", "Fernando"));
-                else if (_configuration.AOATrue == AOAType.Monica)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "AOA", "Monica"));
+				if (_configuration.AOATrue == AOAType.Ely)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "AOA", "Ely"));
+				else if (_configuration.AOATrue == AOAType.Chrysanthie)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "AOA", "Chrysanthie"));
+				else if (_configuration.AOATrue == AOAType.Fernando)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "AOA", "Fernando"));
+				else if (_configuration.AOATrue == AOAType.Monica)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "AOA", "Monica"));
 				else if (_configuration.AOATrue == AOAType.RonaldReagan)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "AOA", "RonaldReagan"));
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "AOA", "RonaldReagan"));
+				else if (_configuration.AOATrue == AOAType.esaadrien)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "AOA", "esaadrien"));
 
-                if (_configuration.AOAText == AOATextType.DontLookBack)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "AOAText", "DontLookBack"));
-                else if (_configuration.AOAText == AOATextType.SorryBoutThat)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "AOAText", "SorryBoutThat"));
+				if (_configuration.AOAText == AOATextType.DontLookBack)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "AOAText", "DontLookBack"));
+				else if (_configuration.AOAText == AOATextType.SorryBoutThat)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "AOAText", "SorryBoutThat"));
 
-                if (_configuration.BustupTrue == BustupType.Neptune)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "Neptune"));
-                else if (_configuration.BustupTrue == BustupType.Ely)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "Ely"));
-                else if (_configuration.BustupTrue == BustupType.Esa)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "Esa"));
-                else if (_configuration.BustupTrue == BustupType.Betina)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "Betina"));
-                else if (_configuration.BustupTrue == BustupType.Anniversary)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "25thAnniversary"));
-                else if (_configuration.BustupTrue == BustupType.JustBlue)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "JustBlue"));
-                else if (_configuration.BustupTrue == BustupType.Sav)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "Sav"));
-                else if (_configuration.BustupTrue == BustupType.Doodled)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "Doodled"));
+				if (_configuration.BustupTrue == BustupType.Neptune)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "Neptune"));
+				else if (_configuration.BustupTrue == BustupType.Ely)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "Ely"));
+				else if (_configuration.BustupTrue == BustupType.Esa)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "Esa"));
+				else if (_configuration.BustupTrue == BustupType.Betina)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "Betina"));
+				else if (_configuration.BustupTrue == BustupType.Anniversary)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "25thAnniversary"));
+				else if (_configuration.BustupTrue == BustupType.JustBlue)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "JustBlue"));
+				else if (_configuration.BustupTrue == BustupType.Sav)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "Sav"));
+				else if (_configuration.BustupTrue == BustupType.Doodled)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "Doodled"));
 				else if (_configuration.BustupTrue == BustupType.RonaldReagan)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "RonaldReagan"));
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "RonaldReagan"));
+				else if (_configuration.BustupTrue == BustupType.ElyAlt)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "ElyAlt"));
+				else if (_configuration.BustupTrue == BustupType.Yuunagi)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "Yuunagi"));
+				else if (_configuration.BustupTrue == BustupType.cielbell)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "cielbell"));
+				else if (_configuration.BustupTrue == BustupType.axolotl)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Bustup", "axolotl"));
 
 
 
-                if (_configuration.ShardTrue == ShardType.Esa)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Shard", "Esa"));
-                else if (_configuration.ShardTrue == ShardType.Ely)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Shard", "Ely"));
+				if (_configuration.ShardTrue == ShardType.Esa)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Shard", "Esa"));
+				else if (_configuration.ShardTrue == ShardType.Ely)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Shard", "Ely"));
 
-                if (_configuration.LevelUpTrue == LevelUpType.Esa)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "LevelUp", "Esa"));
-                else if (_configuration.LevelUpTrue == LevelUpType.Ely)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "LevelUp", "Ely"));
+				if (_configuration.LevelUpTrue == LevelUpType.Esa)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "LevelUp", "Esa"));
+				else if (_configuration.LevelUpTrue == LevelUpType.Ely)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "LevelUp", "Ely"));
 
-                if (_configuration.CutinTrue == CutinType.berrycha)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Cutin", "berrycha"));
-                else if (_configuration.CutinTrue == CutinType.ElyandPatmandx)
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Cutin", "ElyandPatmandx"));
+				if (_configuration.CutinTrue == CutinType.berrycha)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Cutin", "berrycha"));
+				else if (_configuration.CutinTrue == CutinType.ElyandPatmandx)
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "2d", "Cutin", "ElyandPatmandx"));
 
 
-                if (_configuration.KotoneRoom)
+				if (_configuration.KotoneRoom)
+				{
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "Fun Stuff", "Kotone Room"));
+				}
+
+				if (_configuration.FunnyAnims)
+				{
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "Fun Stuff", "Funny Anims"));
+				}
+
+				if (!_configuration.FunnyAnims)
+				{
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "Fun Stuff", "Funny Animsog")); // game dies when 2 files loaded, this has the og files we had in mod but in their own folder, the ! is if the bool is disabled
+				}
+
+				if (_configuration.GregoryHouseRatPoisonDeliverySystem)
+				{
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "Fun Stuff", "GregoryHouseRatPoisonDeliverySystem"));
+				}
+
+				if (!_configuration.GregoryHouseRatPoisonDeliverySystem)
+				{
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "Fun Stuff", "GregoryHouseRatPoisonDeliverySystemog")); // game dies when 2 files loaded, this has the og files we had in mod but in their own folder, the ! is if the bool is disabled
+				}
+
+                if (_configuration.NagiWeap)
                 {
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "Fun Stuff", "Kotone Room"));
+                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "3d", "Nagitana"));
                 }
 
-                if (_configuration.FunnyAnims)
+				if (_configuration.TestSkeleton)
+				{
+					unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "3d", "TestSkeleton"));
+				}
+
+			}
+			catch (Exception ex)
+			{
+				_context._utils.Log($"An error occured trying to read addons: \"{ex.Message}\"", System.Drawing.Color.Red);
+			}
+		}
+
+		private void GenerateMusicScript()
+		{
+			try
+			{
+                var ryo = GetDependency<IRyoApi>("Ryo");
+                //MUSIC TOGGLES
+                themeConfig.AddSetting(nameof(this._configuration.mosqeidk), "MosqEidk.theme.pme");
+                themeConfig.AddSetting(nameof(this._configuration.rock), "Rock.theme.pme");
+                themeConfig.AddSetting(nameof(this._configuration.mosq), "Mosq.theme.pme");
+                themeConfig.AddSetting(nameof(this._configuration.karma), "Karma.theme.pme");
+                themeConfig.Initialize();
+                string path = _modLoader.GetDirectoryForModId(_modConfig.ModId);
+                var nightmusic = new Dictionary<string, bool>
+				{
+					{Path.Combine(path,"BGM\\Mosq\\link_97.hca"),_configuration.nighttrue1==nightmusic1.TimeNightVersionByMosq},
+					{Path.Combine(path,"BGM\\Mineformer\\link_97.hca"),_configuration.nighttrue1==nightmusic1.MidnightReverieByMineformer},
+					{Path.Combine(path,"BGM\\Gabi\\link_97.hca"),_configuration.nighttrue1==nightmusic1.TimeNightByMosqGabiVer},
+					{Path.Combine(path,"BGM\\Mosq\\NightWanderer\\link_97.hca"),_configuration.nighttrue1==nightmusic1.NightWandererByMosq}
+				};
+				foreach (KeyValuePair<string, bool> nm in nightmusic)
+				{
+					if (nm.Value)
+						ryo.AddAudioFile(nm.Key);
+				}
+                var dayin1music = new Dictionary<string, bool>
                 {
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "Fun Stuff", "Funny Anims"));
-                }
-
-                if (!_configuration.FunnyAnims)
+                    {Path.Combine(path, "BGM\\Mosq\\link_50.hca"),_configuration.dayintrue1==dayinmusic1.TimeByMosq},
+					{Path.Combine(path,   "BGM\\Gabi\\link_50.hca"),_configuration.dayintrue1==dayinmusic1.TimeByMosqGabiVer}
+                };
+                foreach (KeyValuePair<string, bool> di1m in dayin1music)
                 {
-                    unrealEssentials.AddFromFolder(Path.Combine(_context._modLocation, "Fun Stuff", "Funny Animsog")); // game dies when 2 files loaded, this has the og files we had in mod but in their own folder, the ! is if the bool is disabled
+                    if (di1m.Value)
+                        ryo.AddAudioFile(di1m.Key);
                 }
-
-
+                var dayin2music = new Dictionary<string, bool>
+                {
+                    {Path.Combine(path, "BGM\\Mosq\\link_51.hca"),_configuration.dayintrue2==dayinmusic2.SunByMosq}
+                };
+                foreach (KeyValuePair<string, bool> di2m in dayin2music)
+                {
+                    if (di2m.Value)
+                        ryo.AddAudioFile(di2m.Key);
+                }
+                var dayout1music = new Dictionary<string, bool>
+                {
+                    {Path.Combine(path, "BGM\\Mosq\\link_25.hca"),_configuration.dayouttrue1==dayoutmusic1.WayOfLifeByMosq}
+                };
+                foreach (KeyValuePair<string, bool> do1m in dayout1music)
+                {
+                    if (do1m.Value)
+                        ryo.AddAudioFile(do1m.Key);
+                }
+                var finalbattlemusic = new Dictionary<string, bool>
+                {
+                    {Path.Combine(path, "BGM\\Karma\\link_29.hca"),_configuration.finalmusictrue==finalmusic.SoulPhraseByKarma}
+                };
+                foreach (KeyValuePair<string, bool> fbm in finalbattlemusic)
+                {
+                    if (fbm.Value)
+                        ryo.AddAudioFile(fbm.Key);
+                }
+                var sociallinkmusic = new Dictionary<string, bool>
+                {
+                    {Path.Combine(path, "BGM\\Mosq\\link_38.hca"),_configuration.socialmusictrue==socialmusic.AfterSchoolByMosq},
+                    {Path.Combine(path, "BGM\\Mosq\\link_43.hca"),_configuration.socialmusictrue==socialmusic.AfterSchoolByMosq}
+                };
+                foreach (KeyValuePair<string, bool> sm in sociallinkmusic)
+                {
+                    if (sm.Value)
+                        ryo.AddAudioFile(sm.Key);
+                }
+                var bosslinkmusic = new Dictionary<string, bool>
+                {
+                    {Path.Combine(path, "BGM\\Mosq\\link_129.hca"),_configuration.bossmusictrue==bossmusic.MasterOfShadowFateMixByMosq},
+                    {Path.Combine(path, "BGM\\Mosq\\link_27.hca"),_configuration.bossmusictrue==bossmusic.MasterOfShadowFateMixByMosq}
+                };
+                foreach (KeyValuePair<string, bool> sm in bosslinkmusic)
+                {
+                    if (sm.Value)
+                        ryo.AddAudioFile(sm.Key);
+                }
+                var bluehairandpronounce = new Dictionary<string, bool>
+			{
+					{Path.Combine(path, "Voice"),_configuration.bluehairandpronounce==true}
+				};
+				foreach (KeyValuePair<string, bool> sm in bluehairandpronounce)
+				{
+					if (sm.Value)
+						ryo.AddAudioFolder(sm.Key);
+				}
+			}
+			catch (Exception ex)
+			{
+                _context._utils.Log($"An error occured while trying to generate the music script: \"{ex.Message}\"", System.Drawing.Color.Red);
             }
-            catch (Exception ex)
-            {
-                _context._utils.Log($"An error occured trying to read addons: \"{ex.Message}\"", System.Drawing.Color.Red);
-            }
-        }
+		}
+
 
 		private void InitializeModules()
 		{
-            _modRuntime.AddModule<UICommon>();
-            if (_configuration.EnableMailIcon) _modRuntime.AddModule<MailIcon>();
-            if (_configuration.EnableCampMenu)
-            {
-                _modRuntime.AddModule<CampCommon>();
-                _modRuntime.AddModule<CampRoot>();
-                _modRuntime.AddModule<CampSkill>();
-                _modRuntime.AddModule<CampItem>();
-                _modRuntime.AddModule<CampEquip>();
-                _modRuntime.AddModule<CampPersona>();
-                _modRuntime.AddModule<CampStats>();
-                _modRuntime.AddModule<CampSocialLink>();
-                _modRuntime.AddModule<CampCalendar>();
-                _modRuntime.AddModule<CampSystem>();
-                _modRuntime.AddModule<SocialStats>();
-                _modRuntime.AddModule<Tutorial>();
-                _modRuntime.AddModule<MissingPerson>();
-            }
-            if (_configuration.EnableDateTimePanel) _modRuntime.AddModule<DateTimePanel>();
-            if (_configuration.EnableTextbox)
-            {
-                _modRuntime.AddModule<MsgWindowSimpleCommon>();
-                _modRuntime.AddModule<MsgWindowSimple>();
-                _modRuntime.AddModule<MsgWindowSelectSimple>();
-                _modRuntime.AddModule<MsgWindowAssist>();
-                _modRuntime.AddModule<MsgWindowSystem>();
-                _modRuntime.AddModule<GenericSelect>();
-            }
-            if (_configuration.EnableMindMessageBox)
-            {
-                _modRuntime.AddModule<MsgWindowMind>();
-                _modRuntime.AddModule<MsgWindowSelectMind>();
-            }
-            if (_configuration.EnableInteractPrompt) _modRuntime.AddModule<MiscCheckDraw>();
-            if (_configuration.EnableMinimap)
-            {
-                _modRuntime.AddModule<Minimap>();
-                _modRuntime.AddModule<LocationSelect>();
-            }
-            if (_configuration.EnableBustup)
-            {
-                _modRuntime.AddModule<Bustup>();
-            }
-            if (_configuration.EnableMessageScript)
-            {
-                _modRuntime.AddModule<MessageScript>();
-            }
-            if (_configuration.EnableTownMap) _modRuntime.AddModule<TownMap>();
-            if (_configuration.EnablePartyPanel) _modRuntime.AddModule<PartyPanel>();
-            if (_configuration.EnableBacklog) _modRuntime.AddModule<Backlog>();
-            if (_configuration.EnableButtonPrompts) _modRuntime.AddModule<KeyHelp>();
-            if (_configuration.EnableGetItem) _modRuntime.AddModule<MiscGetItemDraw>();
-            if (_configuration.EnableTimeSkip)
-            {
-                _modRuntime.AddModule<DayChange>();
-                _modRuntime.AddModule<TimeChange>();
-            }
-            if (_configuration.EnablePersonaStatus) _modRuntime.AddModule<PersonaStatus>();
-            if (_configuration.EnableNetworkFeatures)
-            {
-                _modRuntime.AddModule<VoiceAction>();
-                _modRuntime.AddModule<VoiceAnswer>();
-            }
-            if (_configuration.EnableShop)
-            {
-                _modRuntime.AddModule<SimpleShop>();
-                _modRuntime.AddModule<MiscMoneyDraw>();
-            }
-            if (_configuration.EnableCutin) _modRuntime.AddModule<Cutin>();
-            if (_configuration.EnableTitleMenu)
-            {
-                _modRuntime.AddModule<TitleMenu>();
-                _modRuntime.AddModule<DifficultySelection>();
-            }
-            if (_configuration.EnableStaffRoll)
-            {
-                _modRuntime.AddModule<LocalizationStaffRoll>();
-                //_modRuntime.AddModule<StaffRoll>();
-            }
-            if (_configuration.EnableWipe) _modRuntime.AddModule<Wipe>();
-            _modRuntime.RegisterModules();
+			_modRuntime.AddModule<UICommon>();
+			if (_configuration.EnableMailIcon) _modRuntime.AddModule<MailIcon>();
+			if (_configuration.EnableCampMenu)
+			{
+				_modRuntime.AddModule<CampCommon>();
+				_modRuntime.AddModule<CampRoot>();
+				_modRuntime.AddModule<CampSkill>();
+				_modRuntime.AddModule<CampItem>();
+				_modRuntime.AddModule<CampEquip>();
+				_modRuntime.AddModule<CampPersona>();
+				_modRuntime.AddModule<CampStats>();
+				_modRuntime.AddModule<CampSocialLink>();
+				_modRuntime.AddModule<CampCalendar>();
+				_modRuntime.AddModule<CampSystem>();
+				_modRuntime.AddModule<SocialStats>();
+				_modRuntime.AddModule<Tutorial>();
+				_modRuntime.AddModule<MissingPerson>();
+			}
+			if (_configuration.EnableDateTimePanel) _modRuntime.AddModule<DateTimePanel>();
+			if (_configuration.EnableTextbox)
+			{
+				_modRuntime.AddModule<MsgWindowSimpleCommon>();
+				_modRuntime.AddModule<MsgWindowSimple>();
+				_modRuntime.AddModule<MsgWindowSelectSimple>();
+				_modRuntime.AddModule<MsgWindowAssist>();
+				_modRuntime.AddModule<MsgWindowSystem>();
+				_modRuntime.AddModule<GenericSelect>();
+			}
+			if (_configuration.EnableMindMessageBox)
+			{
+				_modRuntime.AddModule<MsgWindowMind>();
+				_modRuntime.AddModule<MsgWindowSelectMind>();
+			}
+			if (_configuration.EnableInteractPrompt) _modRuntime.AddModule<MiscCheckDraw>();
+			if (_configuration.EnableMinimap)
+			{
+				_modRuntime.AddModule<Minimap>();
+				_modRuntime.AddModule<LocationSelect>();
+			}
+			if (_configuration.EnableBustup)
+			{
+				_modRuntime.AddModule<Bustup>();
+			}
+			if (_configuration.EnableMessageScript)
+			{
+				_modRuntime.AddModule<MessageScript>();
+			}
+			if (_configuration.EnableTownMap) _modRuntime.AddModule<TownMap>();
+			if (_configuration.EnablePartyPanel) _modRuntime.AddModule<PartyPanel>();
+			if (_configuration.EnableBacklog) _modRuntime.AddModule<Backlog>();
+			if (_configuration.EnableButtonPrompts) _modRuntime.AddModule<KeyHelp>();
+			if (_configuration.EnableGetItem) _modRuntime.AddModule<MiscGetItemDraw>();
+			if (_configuration.EnableTimeSkip)
+			{
+				_modRuntime.AddModule<DayChange>();
+				_modRuntime.AddModule<TimeChange>();
+			}
+			if (_configuration.EnablePersonaStatus) _modRuntime.AddModule<PersonaStatus>();
+			if (_configuration.EnableNetworkFeatures)
+			{
+				_modRuntime.AddModule<VoiceAction>();
+				_modRuntime.AddModule<VoiceAnswer>();
+			}
+			if (_configuration.EnableShop)
+			{
+				_modRuntime.AddModule<SimpleShop>();
+				_modRuntime.AddModule<MiscMoneyDraw>();
+			}
+			if (_configuration.EnableCutin) _modRuntime.AddModule<Cutin>();
+			if (_configuration.EnableTitleMenu)
+			{
+				_modRuntime.AddModule<TitleMenu>();
+				_modRuntime.AddModule<DifficultySelection>();
+			}
+			if (_configuration.EnableStaffRoll)
+			{
+				_modRuntime.AddModule<LocalizationStaffRoll>();
+				//_modRuntime.AddModule<StaffRoll>();
+			}
+			if (_configuration.EnableWipe) _modRuntime.AddModule<Wipe>();
+			_modRuntime.RegisterModules();
         }
+	
 
 		// ADD ASSET REDIRECTS HERE.
 		private void RedirectPlayerAssets()
@@ -305,7 +437,7 @@ namespace p3rpc.femc
 			this.RedirectAsset("/Game/Xrd777/Characters/Player/PC0001/Models/SK_PC0001_C154", "/Game/Xrd777/Characters/Player/PC0005/Models/SK_PC0005_C154"); // never gonna give you up, never gonna let you down
 			this.RedirectAsset("/Game/Xrd777/Characters/Player/PC0001/Models/SK_PC0001_C155", "/Game/Xrd777/Characters/Player/PC0002/Models/SK_PC0002_C155"); // yukata i believe
 			this.RedirectAsset("/Game/Xrd777/Characters/Player/PC0001/Models/SK_PC0001_C158", "/Game/Xrd777/Characters/Player/PC0002/Models/SK_PC0002_C983"); // idk
-			this.RedirectAsset("/Game/Xrd777/Characters/Player/PC0001/Models/SK_PC0001_C159", "/Game/Xrd777/Characters/Player/PC0005/Models/SK_PC0005_C159"); // dorm apron
+			this.RedirectAsset("/Game/Xrd777/Characters/Player/PC0001/Models/SK_PC0001_C159", "/Game/Xrd777/Characters/Player/PC0002/Models/SK_PC0002_C970"); // dorm apron
 			this.RedirectAsset("/Game/Xrd777/Characters/Player/PC0001/Models/SK_PC0001_C160", "/Game/Xrd777/Characters/Player/PC0002/Models/SK_PC0002_C984"); // idk
 			this.RedirectAsset("/Game/Xrd777/Characters/Player/PC0001/Models/SK_PC0001_C161", "/Game/Xrd777/Characters/Player/PC0002/Models/SK_PC0002_C980"); // work outfit for something
 			this.RedirectAsset("/Game/Xrd777/Characters/Player/PC0001/Models/SK_PC0001_C162", "/Game/Xrd777/Characters/Player/PC0002/Models/SK_PC0002_C981"); // something
@@ -314,6 +446,9 @@ namespace p3rpc.femc
 			this.RedirectAsset("/Game/Xrd777/Characters/Player/PC0001/Models/SK_PC0001_C503", "/Game/Xrd777/Characters/Player/PC0002/Models/SK_PC0002_C997"); // not best outfit, its naoto, look at her go, i need to use new yuha textures for coat (and maybe make textures for pants and hat while I wait, but either way its naoto, look at that woah, wow, naoto, noot, shirogane, tiny person, little short tiny not tall detective 
 			this.RedirectAsset("/Game/Xrd777/Characters/Player/PC0001/Models/SK_PC0001_H158", "/Game/Xrd777/Characters/Player/PC0002/Models/SK_PC0002_H999"); // hair
 			this.RedirectAsset("/Game/Xrd777/Characters/Player/PC0001/Models/SK_PC0001_H501", "/Game/Xrd777/Characters/Player/PC0002/Models/SK_PC0002_H999"); // hair 2 (3 technically)
+			this.RedirectAsset("/Game/Xrd777/Characters/Player/PC0001/Models/SK_PC0001_H159", "/Game/Xrd777/Characters/Player/PC0002/Models/SK_PC0002_H998"); // yuha hair 3 (4 technically)
+			this.RedirectAsset("/Game/Xrd777/Characters/Player/PC0001/Models/SK_PC0001_C504", "/Game/Xrd777/Characters/Player/PC0006/Models/SK_PC0006_C504");
+			this.RedirectAsset("/Game/Xrd777/Characters/Player/PC0001/Models/SK_PC0001_H504", "/Game/Xrd777/Characters/Player/PC0002/Models/SK_PC0002_H999"); // forgor velvet hair
 			// saori and rio will be added as dummy slots, idk who they will replace yet, probably kaz or something 
 			// theo will need to be redirected here 
 
@@ -338,7 +473,7 @@ namespace p3rpc.femc
 			_configuration = configuration;
 			_logger.WriteLine($"[{_modConfig.ModId}] Config Updated: Applying");
 			_modRuntime.UpdateConfiguration(configuration);
-		}
+        }
 		#endregion
 
 		#region For Exports, Serialization etc.
